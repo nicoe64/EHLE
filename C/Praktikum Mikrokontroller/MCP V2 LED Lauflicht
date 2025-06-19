@@ -1,0 +1,107 @@
+// AUFGABE 2 LEDS
+
+#include "stm32f4xx.h"
+#include "_mcpr_stm32f407.h"
+#include <inttypes.h>
+
+void u_derlay(int usec);
+void LCD_Output16BitWord(uint16_t data);
+void LEDs_InitPorts(void);
+void LEDs_Write(uint16_t data);
+
+void u_delay(int usec){
+	int i;
+	int j = 3150000;
+	
+	for(i = 0; i< usec * j; i++){
+	}		
+}
+
+void  LCD_Output16BitWord(uint16_t data)
+{
+    // Declare mask variable
+    uint16_t mask;
+
+    // Bits 0 and 1 of data to Port D bits 14 and 15
+    mask =  (0x3) << 14;
+    GPIOD->ODR &= ~mask; // clear bits 
+    mask = (data & 0x3) << 14; 
+    GPIOD->ODR |= mask; // set bits
+    
+    // Bits 2 and 3 of data to Port D bits 0 and 1
+    mask = 0x000C >> 2;
+    GPIOD->ODR &= ~mask; // clear bits
+    mask = (data & 0x000C) >> 2;
+    GPIOD->ODR |= mask; // set bits
+// Bits 4 to 12 of data to Port E bits 7 to 15
+    mask = 0x1FF0 << 3;
+    GPIOE->ODR &= ~mask; // clear bits
+    mask = (data & 0x1FF0) << 3;
+    GPIOE->ODR |= mask; // set bits
+
+    
+    // Bits 13 to 15 of data to Port D bits 8 to 10
+    mask = 0xE000 >> 5;
+    GPIOD->ODR &= ~mask; // clear bits
+    mask = (data & 0xE000) >> 5;
+    GPIOD->ODR |= mask; // set bits
+
+return;
+}
+
+void LEDs_InitPorts(){
+	mcpr_SetSystemCoreClock();
+	
+	// Peripheral GPIOD einschalten
+	RCC->AHB1ENR |= 1<<3|1;
+	
+	// Peripheral GPIOD einschalten
+	RCC->AHB1ENR |= 1<<4;
+	
+	//LEDS GPIOD
+	GPIOD->MODER |=0x50554405;
+	
+	//LEDS GPIOE
+	GPIOE->MODER |=0x55554000;
+	
+	// PD11 auf 1 wegen daartenverkehr mit LEDs
+	GPIOD->ODR |= 1<<11;
+}
+void LEDs_Write(uint16_t data){
+	//Vorbereiten der Datenkanaele zum einschalten der LEDs
+    //PD7
+    GPIOD->ODR |= 1<<7;
+    //PD5
+    GPIOD->ODR |= 1<<5;
+    
+    LCD_Output16BitWord(data);
+    
+    //Auf Ausgangsposition zurück 
+		//LEDs sind eingeschaltet müssen nicht weiter beschrieben werden
+    //PD5 und PD7 wieder auf 0
+        GPIOD->ODR &= 0xFF5F;
+
+}
+
+int main(void)
+{    
+    LEDs_InitPorts();
+    
+    while( 1 ) {
+        // Licht läuft durch        
+        for(int i = 0; i < 16; i++){
+            uint16_t data = 0;
+            data |= 1 << i;
+            LEDs_Write(data);
+                        u_delay(1);
+        }        
+        
+        // kein Licht läuft durch
+				for(int i = 0; i < 16; i++){
+        uint16_t data = 0;
+        data |= 1 << i;
+        LEDs_Write(~data);
+                        u_delay(1);
+				}        
+	}
+}

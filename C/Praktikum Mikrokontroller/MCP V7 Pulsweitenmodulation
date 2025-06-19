@@ -1,0 +1,300 @@
+#include "stm32f4xx.h"
+#include "_mcpr_stm32f407.h"
+#include <inttypes.h>
+#include <stdio.h>
+#include <math.h>
+#include "display.h"
+
+#include <string.h>
+
+void u_derlay(int usec);
+void LCD_Output16BitWord(uint16_t data);
+void LEDs_InitPorts(void);
+void LEDs_Write(uint16_t data);
+void Init_Timer7(void);
+void Init_Timer12(void);
+void Init_Timer4(void);
+void Blinky(void);
+void Lauflicht(void);
+
+int ms= 0;
+int a = 0;
+char str[16];
+uint16_t t1 = 0;
+uint16_t t2 = 0;
+uint16_t diff = 0;
+uint32_t tick = 0;
+//uint16_t volts [2];
+//uint16_t chselect = 0;
+
+void u_delay(int usec){
+	int i;
+	int j = 3150000;
+	
+	for(i = 0; i< usec * j; i++){
+	}		
+}
+
+void LCD_Output16BitWord(uint16_t data){
+    // Declare mask variable
+    uint16_t mask;
+
+    // Bits 0 and 1 of data to Port D bits 14 and 15
+    mask =  (0x3) << 14;
+    GPIOD->ODR &= ~mask; // clear bits 
+    mask = (data & 0x3) << 14; 
+    GPIOD->ODR |= mask; // set bits
+    
+    // Bits 2 and 3 of data to Port D bits 0 and 1
+    mask = 0x000C >> 2;
+    GPIOD->ODR &= ~mask; // clear bits
+    mask = (data & 0x000C) >> 2;
+    GPIOD->ODR |= mask; // set bits
+    
+    // Bits 4 to 12 of data to Port E bits 7 to 15
+    mask = 0x1FF0 << 3;
+    GPIOE->ODR &= ~mask; // clear bits
+    mask = (data & 0x1FF0) << 3;
+    GPIOE->ODR |= mask; // set bits
+
+    
+    // Bits 13 to 15 of data to Port D bits 8 to 10
+    mask = 0xE000 >> 5;
+    GPIOD->ODR &= ~mask; // clear bits
+    mask = (data & 0xE000) >> 5;
+    GPIOD->ODR |= mask; // set bits
+
+return;
+}
+
+void LEDs_InitPorts(){
+	
+	// Peripheral GPIOD einschalten
+	RCC->AHB1ENR |= 1<<3|1;
+	
+	// Peripheral GPIOD einschalten
+	RCC->AHB1ENR |= 1<<4;
+	
+	//LEDS GPIOD
+	GPIOD->MODER |=0x50554405;
+	
+	//LEDS GPIOE
+	GPIOE->MODER |=0x55554000;
+	
+	// PD11 auf 1 wegen daartenverkehr mit LEDs
+	GPIOD->ODR |= 1<<11;
+	
+	// Orange LED/Display Background (Port D13/12) auf Ausgang schalten
+	GPIOD->MODER |= 0x05000000; //1<<26;
+}
+
+void LEDs_Write(uint16_t data){
+	//Vorbereiten der Datenkanaele zum einschalten der LEDs
+    //PD7
+    GPIOD->ODR |= 1<<7;
+    //PD5
+    GPIOD->ODR |= 1<<5;
+    
+    LCD_Output16BitWord(data);
+    
+    //Auf Ausgangsposition zurück 
+		//LEDs sind eingeschaltet müssen nicht weiter beschrieben werden
+    //PD5 und PD7 wieder auf 0
+        GPIOD->ODR &= 0xFF5F;
+
+}
+
+void Init_Timer7(){
+	//Takt einschalten
+	RCC->APB1ENR |= 1<<5;
+	
+	
+	TIM7->DIER |=(1<<0);
+	NVIC_SetPriority(TIM7_IRQn, 10);
+	NVIC_EnableIRQ(TIM7_IRQn);
+	
+	TIM7->CR1 |= 1u<<0;
+
+	//Prescaler
+	TIM7->PSC = 84 -1;
+	//Auto Reload Register
+	TIM7->ARR = 1000 -1;
+}
+
+void Init_Timer12(){
+	RCC -> AHB1ENR |= 2;
+	GPIOB -> MODER |= 0x20000000;
+	RCC ->APB1ENR |= (1 << 6);
+	
+	TIM12 -> PSC = 0;
+	TIM12 -> SMCR |= 0x0000;
+	TIM12 -> DIER = 2;
+	TIM12 -> ARR = 65535;
+	TIM12 -> CR1 = 1;
+	TIM12 -> CCMR1 |= 1;
+	TIM12 -> CCER |= 1;
+	GPIOB -> AFR[1] = 0x09000000;
+	
+	NVIC_SetPriority (TIM8_BRK_TIM12_IRQn, 11);
+	NVIC_EnableIRQ(TIM8_BRK_TIM12_IRQn);
+}
+
+void Init_Timer4 (){
+	RCC->APB1ENR |= (1<<2);
+	
+	TIM4->PSC = 420-1;		//200Hz base Frequenz
+	TIM4->ARR = 1000;			//Auto reload to 1000 for %
+	
+	TIM4->EGR |= 1;
+	
+	TIM4->CCMR1 &= ~(2 << 8);		//channel 2 output mod
+	TIM4->CCMR1 |= 6 << 12;		//compare mode 110
+	
+	TIM4->CCER |= 1 << 4;
+	
+	TIM4->CR1 |= 1;				//connect count reg to prescaler
+	
+	RCC->AHB1ENR |= (1<<3) | (1);
+	GPIOD->MODER &= ~(3 << 26);		//set PD 13
+	GPIOD->MODER |= (2 << 26);		// to Alternate Function Mode
+	GPIOD->AFR[1] = 2 << 20;		//set PD 13 to Alternate Function 2
+	
+	TIM4->DIER |= 1;
+	
+	TIM4->CCR2 = 999;
+}
+
+void TIM7_IRQHandler(){
+	TIM7->SR &= ~(1u << 0);
+	ms++;
+	a++;
+}
+
+void TIM8_BRK_TIM12_IRQHandler(){
+	t2 = t1;
+	t1 = TIM12 ->CCR1 ;
+	
+	diff = t1 - t2;
+	tick++;
+	
+}
+
+
+void Blinky(void){ 
+	if (((int)(ms/500)%2) == 1){
+			GPIOD->ODR |= 1<<12; 
+}else{
+			GPIOD->ODR &= 0xEFFF; //~(1<<13); // ~(1<<12); 
+		}
+
+}
+
+void Lauflicht(void){
+				// Licht läuft durch        
+        for(int i = 0; i < 16; i++){
+            uint16_t data = 0;
+            data |= 1 << i;
+            LEDs_Write(data);
+                        u_delay(1);
+        }        
+        
+        // kein Licht läuft durch
+        for(int i = 0; i < 16; i++){
+            uint16_t data = 0;
+            data |= 1 << i;
+            LEDs_Write(~data);
+                        u_delay(1);
+        }
+}
+	
+int main(void)
+{    
+	mcpr_SetSystemCoreClock();
+	LEDs_InitPorts();
+	LCD_Init();
+	Init_Timer7();
+	//Init_Timer12();
+	Init_Timer4();
+	
+	char txt[32];
+	char txt2[32];
+	
+	int dim_time = 0;
+	
+	while(1){
+		a = 0;
+		int dim = 0;
+		if( (GPIOA->IDR & 1) != 0) {
+			dim =1;
+		}
+		if (dim == 1){
+			TIM4->CCR2 = 999;
+			dim_time = ms;
+		
+		}else if(dim == 0){
+			if (ms - dim_time >= 10000) {
+				if (TIM4->CCR2 <= 50){
+					TIM4->CCR2 = 50;
+				} else {
+					TIM4->CCR2 -= 10;
+				}
+			}
+		}
+	
+	
+		unsigned int hz = 0;
+		
+		hz = 1 * 84000000/ (diff);
+	
+		sprintf(txt, "%8u", hz);
+		sprintf(txt2, "%8u", diff);
+		
+		strcat(txt, "Hz");
+		
+		LCD_WriteString( 10, 40, 0xFFFF, 0x0000, txt);
+		LCD_WriteString( 10, 70, 0xFFFF, 0x0000, txt2);
+		
+		sprintf(str, "%d", ms);      
+		LCD_WriteString( 10, 10, 0xFFFF, 0x0000, str);
+	
+		//while (a<50){}
+	}
+}
+
+/* Aufgabe 6
+mcpr_SetSystemCoreClock();
+	Init_Timer7();
+	Init_Timer12();
+	LEDs_InitPorts();
+	LCD_Init();
+	
+	char txt[32];
+	char txt2[32];
+	
+ 
+    while( 1 ) {   
+			LCD_ClearDisplay( 0xFE00 );
+			a = 0;
+		
+			//HintergrundBeleuchtung
+			GPIOD->ODR |= 1<<13; 
+			
+			unsigned int hz = 0;
+		
+			hz = 1 * 84000000/ (diff);
+		
+			sprintf(txt, "%8u", hz);
+			sprintf(txt2, "%8u", diff);
+		
+			strcat(txt, "Hz");
+		
+			LCD_WriteString( 10, 40, 0xFFFF, 0x0000, txt);
+			LCD_WriteString( 10, 70, 0xFFFF, 0x0000, txt2);
+		
+			sprintf(str, "%d", ms);      
+			LCD_WriteString( 10, 10, 0xFFFF, 0x0000, str);
+			
+			while (a < 50){
+    }
+        
+		}*/
